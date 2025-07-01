@@ -1,0 +1,300 @@
+name: Update README
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: 'Type of README update'
+        required: true
+        default: 'general'
+        type: choice
+        options:
+          - general
+          - dependencies
+          - api-docs
+          - features
+          - all
+  
+  # Trigger on push to main branch if specific files change
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'requirements.txt'
+      - 'tests/**'
+      - '.github/workflows/update-readme.yml'
+  
+  # Trigger on pull request
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'README.md'
+
+  # Schedule weekly updates
+  schedule:
+    - cron: '0 0 * * 0'  # Every Sunday at midnight
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for proper git operations
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Install additional tools for README generation
+          pip install pyyaml markdown-toc
+      
+      - name: Generate API documentation
+        if: github.event.inputs.update_type == 'api-docs' || github.event.inputs.update_type == 'all' || github.event_name == 'schedule'
+        run: |
+          # Extract API endpoints and generate documentation
+          python -c "
+          import json
+          from app.main import app
+          from fastapi.openapi.utils import get_openapi
+          
+          # Generate OpenAPI schema
+          openapi_schema = get_openapi(
+              title=app.title,
+              version=app.version,
+              description=app.description,
+              routes=app.routes,
+          )
+          
+          # Save endpoints summary
+          endpoints = []
+          for path, methods in openapi_schema['paths'].items():
+              for method, details in methods.items():
+                  endpoints.append({
+                      'path': path,
+                      'method': method.upper(),
+                      'summary': details.get('summary', ''),
+                      'tags': details.get('tags', [])
+                  })
+          
+          with open('api_endpoints.json', 'w') as f:
+              json.dump(endpoints, f, indent=2)
+          "
+      
+      - name: Update dependencies section
+        if: github.event.inputs.update_type == 'dependencies' || github.event.inputs.update_type == 'all' || github.event_name == 'push'
+        run: |
+          # Generate dependencies list with versions
+          python -c "
+          import pkg_resources
+          import re
+          
+          # Read requirements.txt
+          with open('requirements.txt', 'r') as f:
+              requirements = f.read()
+          
+          # Parse installed packages
+          installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
+          
+          # Generate markdown table
+          deps_md = '### Dependencies\\n\\n'
+          deps_md += '| Package | Version | Purpose |\\n'
+          deps_md += '|---------|---------|---------|\\n'
+          
+          # Define package purposes
+          purposes = {
+              'fastapi': 'Web framework for building APIs',
+              'uvicorn': 'ASGI server implementation',
+              'sqlalchemy': 'SQL toolkit and ORM',
+              'pydantic': 'Data validation using Python type annotations',
+              'python-jose': 'JavaScript Object Signing and Encryption',
+              'passlib': 'Password hashing library',
+              'python-multipart': 'Multipart form data parser',
+              'alembic': 'Database migration tool',
+              'pytest': 'Testing framework',
+              'httpx': 'HTTP client for testing'
+          }
+          
+          for line in requirements.strip().split('\\n'):
+              if line and not line.startswith('#'):
+                  # Extract package name
+                  match = re.match(r'^([a-zA-Z0-9-_]+)', line)
+                  if match:
+                      pkg_name = match.group(1).lower()
+                      version = installed_packages.get(pkg_name, 'Not installed')
+                      purpose = purposes.get(pkg_name, 'Dependency')
+                      deps_md += f'| {pkg_name} | {version} | {purpose} |\\n'
+          
+          with open('dependencies.md', 'w') as f:
+              f.write(deps_md)
+          "
+      
+      - name: Check test coverage
+        if: github.event.inputs.update_type == 'features' || github.event.inputs.update_type == 'all'
+        continue-on-error: true
+        run: |
+          # Run tests with coverage
+          pytest --cov=app --cov-report=json --cov-report=term || true
+          
+          # Generate coverage badge
+          python -c "
+          import json
+          try:
+              with open('coverage.json', 'r') as f:
+                  coverage_data = json.load(f)
+                  coverage_percent = coverage_data['totals']['percent_covered']
+                  print(f'COVERAGE={coverage_percent:.1f}')
+          except:
+              print('COVERAGE=0.0')
+          " >> $GITHUB_ENV
+      
+      - name: Update README with timestamp
+        run: |
+          # Add last updated timestamp
+          python -c "
+          from datetime import datetime
+          import re
+          
+          with open('README.md', 'r') as f:
+              content = f.read()
+          
+          # Update or add last updated section
+          timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+          update_section = f'\\n---\\n\\n*Last updated: {timestamp}*\\n'
+          
+          # Check if update section exists
+          if re.search(r'\\*Last updated:', content):
+              content = re.sub(r'\\*Last updated:.*?\\*', f'*Last updated: {timestamp}*', content)
+          else:
+              content += update_section
+          
+          with open('README.md', 'w') as f:
+              f.write(content)
+          "
+      
+      - name: Generate table of contents
+        run: |
+          # Add or update table of contents
+          python -c "
+          import re
+          
+          with open('README.md', 'r') as f:
+              content = f.read()
+          
+          # Extract headers
+          headers = re.findall(r'^(#{1,6})\\s+(.+)$', content, re.MULTILINE)
+          
+          # Generate TOC
+          toc = '## Table of Contents\\n\\n'
+          for level, title in headers:
+              if title not in ['Table of Contents', 'RBAC Auth System']:
+                  indent = '  ' * (len(level) - 2)
+                  anchor = title.lower().replace(' ', '-').replace('/', '').replace('(', '').replace(')', '')
+                  toc += f'{indent}- [{title}](#{anchor})\\n'
+          
+          # Insert TOC after main title
+          if '## Table of Contents' not in content:
+              parts = content.split('\\n## ', 1)
+              if len(parts) == 2:
+                  content = parts[0] + '\\n\\n' + toc + '\\n## ' + parts[1]
+          
+          with open('README.md', 'w') as f:
+              f.write(content)
+          "
+      
+      - name: Validate README
+        run: |
+          # Check for broken links and formatting issues
+          python -c "
+          import re
+          
+          with open('README.md', 'r') as f:
+              content = f.read()
+          
+          # Check for common issues
+          issues = []
+          
+          # Check for broken internal links
+          internal_links = re.findall(r'\\[([^\\]]+)\\]\\((?!http)([^)]+)\\)', content)
+          for text, link in internal_links:
+              if link.startswith('#'):
+                  # Anchor link
+                  anchor = link[1:]
+                  headers = re.findall(r'^#{1,6}\\s+(.+)$', content, re.MULTILINE)
+                  anchors = [h.lower().replace(' ', '-').replace('/', '').replace('(', '').replace(')', '') for _, h in headers]
+                  if anchor not in anchors:
+                      issues.append(f'Broken anchor link: {link}')
+              elif not link.startswith('http'):
+                  # File link
+                  import os
+                  if not os.path.exists(link):
+                      issues.append(f'Broken file link: {link}')
+          
+          # Check for TODO items
+          todos = re.findall(r'TODO:.*$', content, re.MULTILINE)
+          for todo in todos:
+              issues.append(f'Found TODO: {todo}')
+          
+          if issues:
+              print('README validation issues found:')
+              for issue in issues:
+                  print(f'  - {issue}')
+          else:
+              print('README validation passed!')
+          "
+      
+      - name: Create Pull Request
+        if: github.event_name != 'pull_request'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: Update README.md'
+          title: 'Automated README Update'
+          body: |
+            ## Automated README Update
+            
+            This PR contains automated updates to the README.md file.
+            
+            ### Changes made:
+            - ✅ Updated timestamp
+            - ✅ Regenerated table of contents
+            - ${{ github.event.inputs.update_type == 'dependencies' && '✅ Updated dependencies section' || '⏭️  Skipped dependencies update' }}
+            - ${{ github.event.inputs.update_type == 'api-docs' && '✅ Updated API documentation' || '⏭️  Skipped API docs update' }}
+            - ${{ github.event.inputs.update_type == 'features' && '✅ Updated features and coverage' || '⏭️  Skipped features update' }}
+            
+            ### Trigger information:
+            - Triggered by: ${{ github.event_name }}
+            - Update type: ${{ github.event.inputs.update_type || 'automatic' }}
+            
+            Please review the changes before merging.
+          branch: update-readme-${{ github.run_number }}
+          delete-branch: true
+          labels: |
+            documentation
+            automated
+      
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## README Validation Results\n\nThe README.md file has been validated. Check the workflow logs for any issues found.'
+            })

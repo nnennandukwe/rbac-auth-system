@@ -1,0 +1,194 @@
+name: Sync README with Code Changes
+
+on:
+  # Trigger when Python files are modified
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - '**.py'
+      - 'requirements.txt'
+      - 'alembic/**'
+      - 'tests/**'
+
+jobs:
+  sync-readme:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ast-grep
+      
+      - name: Extract project information
+        id: project-info
+        run: |
+          # Extract routes and permissions
+          python -c "
+          import ast
+          import json
+          from pathlib import Path
+          
+          # Find all route files
+          routes_dir = Path('app/routes')
+          routes_info = {}
+          
+          for route_file in routes_dir.glob('*.py'):
+              with open(route_file, 'r') as f:
+                  content = f.read()
+              
+              # Extract route decorators and their permissions
+              if '@router.' in content:
+                  routes_info[route_file.stem] = {
+                      'file': str(route_file),
+                      'routes': []
+                  }
+                  
+                  # Simple extraction of routes (could be enhanced)
+                  import re
+                  route_pattern = r'@router\\.([a-z]+)\\([\"\\']([^\"\\']+)[\"\\']'
+                  matches = re.findall(route_pattern, content)
+                  for method, path in matches:
+                      routes_info[route_file.stem]['routes'].append({
+                          'method': method.upper(),
+                          'path': path
+                      })
+          
+          # Save routes info
+          with open('routes_info.json', 'w') as f:
+              json.dump(routes_info, f, indent=2)
+          
+          # Count models
+          models_dir = Path('app/models')
+          model_count = len(list(models_dir.glob('*.py'))) - 1  # Exclude __init__.py
+          
+          # Count tests
+          test_count = len(list(Path('tests').glob('test_*.py')))
+          
+          print(f'::set-output name=model_count::{model_count}')
+          print(f'::set-output name=test_count::{test_count}')
+          print(f'::set-output name=route_count::{len(routes_info)}')
+          "
+      
+      - name: Update README statistics
+        run: |
+          python -c "
+          import re
+          import json
+          from datetime import datetime
+          
+          # Read current README
+          with open('README.md', 'r') as f:
+              readme = f.read()
+          
+          # Load routes info
+          with open('routes_info.json', 'r') as f:
+              routes_info = json.load(f)
+          
+          # Generate statistics section
+          stats = f'''
+## Project Statistics
+
+- **Models**: ${{ steps.project-info.outputs.model_count }}
+- **API Routes**: ${{ steps.project-info.outputs.route_count }}
+- **Test Files**: ${{ steps.project-info.outputs.test_count }}
+- **Last Updated**: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+'''
+          
+          # Update or add statistics section
+          if '## Project Statistics' in readme:
+              # Replace existing section
+              readme = re.sub(
+                  r'## Project Statistics.*?(?=##|$)',
+                  stats + '\\n',
+                  readme,
+                  flags=re.DOTALL
+              )
+          else:
+              # Add before Project Structure
+              if '## Project Structure' in readme:
+                  readme = readme.replace('## Project Structure', stats + '\\n## Project Structure')
+              else:
+                  readme += '\\n' + stats
+          
+          # Write updated README
+          with open('README.md', 'w') as f:
+              f.write(readme)
+          "
+      
+      - name: Update API endpoints section
+        run: |
+          python -c "
+          import json
+          import re
+          
+          # Read routes info
+          with open('routes_info.json', 'r') as f:
+              routes_info = json.load(f)
+          
+          # Generate endpoints documentation
+          endpoints_md = '## API Endpoints\\n\\n'
+          
+          for module, info in routes_info.items():
+              if info['routes']:
+                  endpoints_md += f'### {module.title()} Routes\\n\\n'
+                  for route in info['routes']:
+                      endpoints_md += f'- `{route[\"method\"]} {route[\"path\"]}`\\n'
+                  endpoints_md += '\\n'
+          
+          # Read current README
+          with open('README.md', 'r') as f:
+              readme = f.read()
+          
+          # Update or add API endpoints section
+          if '## API Endpoints' in readme:
+              readme = re.sub(
+                  r'## API Endpoints.*?(?=##|$)',
+                  endpoints_md,
+                  readme,
+                  flags=re.DOTALL
+              )
+          else:
+              # Add after Protected Endpoints
+              if '## Protected Endpoints' in readme:
+                  parts = readme.split('## Authentication Flow')
+                  if len(parts) == 2:
+                      readme = parts[0] + endpoints_md + '\\n## Authentication Flow' + parts[1]
+          
+          with open('README.md', 'w') as f:
+              f.write(readme)
+          "
+      
+      - name: Check for changes
+        id: check-changes
+        run: |
+          if git diff --quiet README.md; then
+            echo "::set-output name=changed::false"
+          else
+            echo "::set-output name=changed::true"
+          fi
+      
+      - name: Commit and push changes
+        if: steps.check-changes.outputs.changed == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add README.md
+          git commit -m "docs: Auto-update README with latest project information"
+          git push

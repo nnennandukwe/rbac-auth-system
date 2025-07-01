@@ -1,0 +1,140 @@
+name: Manual README Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_message:
+        description: 'Commit message for the update'
+        required: false
+        default: 'docs: Update README.md'
+      update_sections:
+        description: 'Sections to update (comma-separated)'
+        required: false
+        default: 'timestamp,toc'
+        type: string
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Update timestamp
+        if: contains(github.event.inputs.update_sections, 'timestamp')
+        run: |
+          python -c "
+          import re
+          from datetime import datetime
+          
+          with open('README.md', 'r') as f:
+              content = f.read()
+          
+          timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+          
+          if '*Last updated:' in content:
+              content = re.sub(r'\\*Last updated:.*?\\*', f'*Last updated: {timestamp}*', content)
+          else:
+              content += f'\\n\\n---\\n\\n*Last updated: {timestamp}*\\n'
+          
+          with open('README.md', 'w') as f:
+              f.write(content)
+          "
+      
+      - name: Update table of contents
+        if: contains(github.event.inputs.update_sections, 'toc')
+        run: |
+          python -c "
+          import re
+          
+          with open('README.md', 'r') as f:
+              content = f.read()
+          
+          # Remove existing TOC
+          content = re.sub(r'## Table of Contents.*?(?=##)', '', content, flags=re.DOTALL)
+          
+          # Extract headers
+          headers = re.findall(r'^(#{2,6})\\s+(.+)$', content, re.MULTILINE)
+          
+          # Generate new TOC
+          toc = '## Table of Contents\\n\\n'
+          for level, title in headers:
+              if title not in ['Table of Contents']:
+                  depth = len(level) - 2
+                  indent = '  ' * depth
+                  anchor = title.lower()
+                  anchor = re.sub(r'[^a-z0-9\\s-]', '', anchor)
+                  anchor = re.sub(r'\\s+', '-', anchor)
+                  toc += f'{indent}- [{title}](#{anchor})\\n'
+          
+          # Insert TOC after main heading
+          lines = content.split('\\n')
+          insert_pos = 0
+          for i, line in enumerate(lines):
+              if line.startswith('# ') and i > 0:
+                  insert_pos = i + 1
+                  # Skip empty lines
+                  while insert_pos < len(lines) and not lines[insert_pos].strip():
+                      insert_pos += 1
+                  break
+          
+          lines.insert(insert_pos, '')
+          lines.insert(insert_pos + 1, toc.rstrip())
+          lines.insert(insert_pos + 2, '')
+          
+          content = '\\n'.join(lines)
+          
+          with open('README.md', 'w') as f:
+              f.write(content)
+          "
+      
+      - name: Format README
+        if: contains(github.event.inputs.update_sections, 'format')
+        run: |
+          python -c "
+          import re
+          
+          with open('README.md', 'r') as f:
+              content = f.read()
+          
+          # Ensure consistent spacing
+          content = re.sub(r'\\n{3,}', '\\n\\n', content)
+          
+          # Ensure headers have proper spacing
+          content = re.sub(r'\\n(#{1,6}\\s)', r'\\n\\n\\1', content)
+          content = re.sub(r'^(#{1,6}\\s)', r'\\1', content)
+          
+          # Ensure code blocks have proper spacing
+          content = re.sub(r'\\n```', r'\\n\\n```', content)
+          content = re.sub(r'```\\n', r'```\\n\\n', content)
+          
+          # Remove trailing whitespace
+          lines = content.split('\\n')
+          lines = [line.rstrip() for line in lines]
+          content = '\\n'.join(lines)
+          
+          with open('README.md', 'w') as f:
+              f.write(content)
+          "
+      
+      - name: Commit changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          if ! git diff --quiet; then
+            git add README.md
+            git commit -m "${{ github.event.inputs.update_message }}"
+            git push
+          else
+            echo "No changes to commit"
+          fi

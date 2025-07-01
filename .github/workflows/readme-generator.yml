@@ -1,0 +1,466 @@
+name: Generate README from Code
+
+on:
+  workflow_dispatch:
+    inputs:
+      template:
+        description: 'README template to use'
+        required: true
+        default: 'standard'
+        type: choice
+        options:
+          - standard
+          - detailed
+          - minimal
+      include_badges:
+        description: 'Include status badges'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyyaml jinja2
+      
+      - name: Analyze codebase
+        id: analyze
+        run: |
+          python -c "
+          import os
+          import ast
+          import json
+          from pathlib import Path
+          
+          # Analyze project structure
+          project_info = {
+              'name': 'RBAC Auth System',
+              'description': '',
+              'features': [],
+              'models': [],
+              'routes': [],
+              'dependencies': [],
+              'structure': {}
+          }
+          
+          # Extract project description from main.py
+          try:
+              with open('app/main.py', 'r') as f:
+                  content = f.read()
+                  if 'description=' in content:
+                      import re
+                      match = re.search(r'description=[\"\\']([^\"\\']+)[\"\\']', content)
+                      if match:
+                          project_info['description'] = match.group(1)
+          except:
+              pass
+          
+          # Find all Python files
+          for root, dirs, files in os.walk('app'):
+              for file in files:
+                  if file.endswith('.py'):
+                      filepath = os.path.join(root, file)
+                      with open(filepath, 'r') as f:
+                          content = f.read()
+                      
+                      # Extract models
+                      if 'models' in root and 'class' in content:
+                          matches = re.findall(r'class\\s+(\\w+)\\s*\\(.*Base.*\\):', content)
+                          project_info['models'].extend(matches)
+                      
+                      # Extract routes
+                      if 'routes' in root and '@router' in content:
+                          route_matches = re.findall(r'@router\\.(\\w+)\\([\"\\']([^\"\\']+)[\"\\']', content)
+                          for method, path in route_matches:
+                              project_info['routes'].append({
+                                  'method': method.upper(),
+                                  'path': path,
+                                  'file': os.path.basename(filepath)
+                              })
+          
+          # Extract features from code patterns
+          feature_patterns = {
+              'JWT authentication': 'jwt|token|bearer',
+              'Role-Based Access Control': 'role|permission|rbac',
+              'Database ORM': 'sqlalchemy|model|database',
+              'API documentation': 'swagger|openapi|docs',
+              'Password hashing': 'bcrypt|passlib|hash',
+              'Logging system': 'logging|logger|log',
+              'Testing suite': 'pytest|test_|unittest',
+              'Database migrations': 'alembic|migration',
+              'Environment configuration': '.env|config|settings',
+              'Error handling': 'exception|error|try.*except'
+          }
+          
+          for feature, pattern in feature_patterns.items():
+              for root, dirs, files in os.walk('.'):
+                  for file in files:
+                      if file.endswith('.py'):
+                          filepath = os.path.join(root, file)
+                          try:
+                              with open(filepath, 'r') as f:
+                                  if re.search(pattern, f.read(), re.IGNORECASE):
+                                      if feature not in project_info['features']:
+                                          project_info['features'].append(feature)
+                                      break
+                          except:
+                              pass
+          
+          # Save analysis
+          with open('project_analysis.json', 'w') as f:
+              json.dump(project_info, f, indent=2)
+          "
+      
+      - name: Generate README content
+        run: |
+          python -c "
+          import json
+          from datetime import datetime
+          
+          # Load analysis
+          with open('project_analysis.json', 'r') as f:
+              info = json.load(f)
+          
+          # Generate badges if requested
+          badges = ''
+          if '${{ github.event.inputs.include_badges }}' == 'true':
+              badges = '''![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.68+-green.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Tests](https://github.com/${{ github.repository }}/workflows/tests/badge.svg)
+![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)
+
+'''
+          
+          # Generate README based on template
+          template = '${{ github.event.inputs.template }}'
+          
+          if template == 'minimal':
+              readme = f'''# {info['name']}
+              
+{badges}{info['description'] or 'A FastAPI-based authentication and authorization system.'}
+
+## Quick Start
+
+\`\`\`bash
+pip install -r requirements.txt
+python run_server.py
+\`\`\`
+
+API docs: http://localhost:8000/docs
+'''
+          
+          elif template == 'detailed':
+              # Generate detailed README
+              features_list = '\\n'.join([f'- {feature}' for feature in info['features']])
+              models_list = '\\n'.join([f'- {model}' for model in info['models']])
+              
+              routes_by_file = {}
+              for route in info['routes']:
+                  file = route['file']
+                  if file not in routes_by_file:
+                      routes_by_file[file] = []
+                  routes_by_file[file].append(f\"`{route['method']} {route['path']}`\")
+              
+              routes_section = ''
+              for file, routes in routes_by_file.items():
+                  routes_section += f\"\\n### {file.replace('.py', '').title()}\\n\"
+                  routes_section += '\\n'.join([f'- {route}' for route in routes])
+                  routes_section += '\\n'
+              
+              readme = f'''# {info['name']}
+
+{badges}{info['description'] or 'A comprehensive Role-Based Access Control (RBAC) authentication system built with FastAPI.'}
+
+## 🚀 Features
+
+{features_list}
+
+## 📋 Table of Contents
+
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [API Documentation](#api-documentation)
+- [Database Models](#database-models)
+- [API Endpoints](#api-endpoints)
+- [Testing](#testing)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
+
+## 💻 Installation
+
+### Prerequisites
+
+- Python 3.9 or higher
+- pip package manager
+- Virtual environment (recommended)
+
+### Setup
+
+1. Clone the repository:
+\`\`\`bash
+git clone https://github.com/${{ github.repository }}.git
+cd rbac-auth-system
+\`\`\`
+
+2. Create and activate virtual environment:
+\`\`\`bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+\`\`\`
+
+3. Install dependencies:
+\`\`\`bash
+pip install -r requirements.txt
+\`\`\`
+
+4. Set up environment variables:
+\`\`\`bash
+cp .env.example .env
+# Edit .env with your configuration
+\`\`\`
+
+5. Run database migrations:
+\`\`\`bash
+alembic upgrade head
+\`\`\`
+
+## ⚙️ Configuration
+
+Configure the application using environment variables in `.env`:
+
+\`\`\`env
+# Security
+SECRET_KEY=your-secret-key-here
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# Database
+DATABASE_URL=sqlite:///./rbac_auth.db
+
+# Logging
+LOG_LEVEL=INFO
+LOG_FILE=logs/rbac_auth.log
+\`\`\`
+
+## 🚀 Usage
+
+### Starting the Server
+
+\`\`\`bash
+# Using the startup script
+python run_server.py
+
+# Or using uvicorn directly
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+\`\`\`
+
+### Default Credentials
+
+- **Username**: admin
+- **Password**: admin123
+
+## 📚 API Documentation
+
+Once the server is running, access the interactive API documentation:
+
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+## 🗄️ Database Models
+
+{models_list}
+
+## 🔌 API Endpoints
+{routes_section}
+
+## 🧪 Testing
+
+Run the test suite:
+
+\`\`\`bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=app --cov-report=html
+
+# Run specific test file
+pytest tests/test_auth.py
+\`\`\`
+
+## 🛠️ Development
+
+### Project Structure
+
+\`\`\`
+rbac-auth-system/
+├── app/
+│   ├── __init__.py
+│   ├── main.py              # FastAPI application
+│   ├── models/              # Database models
+│   ├── routes/              # API endpoints
+│   ├── auth/                # Authentication logic
+│   ├── permissions/         # Permission system
+│   └── logging/             # Logging configuration
+├── tests/                   # Test suite
+├── alembic/                 # Database migrations
+├── logs/                    # Application logs
+├── requirements.txt         # Python dependencies
+└── README.md               # This file
+\`\`\`
+
+### Code Style
+
+This project uses:
+- **Black** for code formatting
+- **isort** for import sorting
+- **flake8** for linting
+
+\`\`\`bash
+# Format code
+black app tests
+
+# Sort imports
+isort app tests
+
+# Run linter
+flake8 app tests
+\`\`\`
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (\`git checkout -b feature/amazing-feature\`)
+3. Commit your changes (\`git commit -m 'Add amazing feature'\`)
+4. Push to the branch (\`git push origin feature/amazing-feature\`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+---
+
+*Generated on {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}*
+'''
+          
+          else:  # standard template
+              features_list = '\\n'.join([f'- {feature}' for feature in info['features'][:10]])
+              
+              readme = f'''# {info['name']}
+
+{badges}{info['description'] or 'A Role-Based Access Control (RBAC) authentication system built with FastAPI and SQLAlchemy.'}
+
+## Features
+
+{features_list}
+
+## Quick Start
+
+\`\`\`bash
+# Clone the repository
+git clone https://github.com/${{ github.repository }}.git
+cd rbac-auth-system
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the server
+python run_server.py
+\`\`\`
+
+The API will be available at `http://localhost:8000`
+
+## API Documentation
+
+- Interactive API docs: `http://localhost:8000/docs`
+- Alternative API docs: `http://localhost:8000/redoc`
+
+## Default Credentials
+
+- Username: `admin`
+- Password: `admin123`
+
+## Testing
+
+\`\`\`bash
+pytest
+\`\`\`
+
+## Project Structure
+
+\`\`\`
+rbac-auth-system/
+├── app/                # Application code
+├── tests/              # Test suite
+├── alembic/            # Database migrations
+├── logs/               # Log files
+└── requirements.txt    # Dependencies
+\`\`\`
+
+---
+
+*Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}*
+'''
+          
+          # Save generated README
+          with open('README_generated.md', 'w') as f:
+              f.write(readme)
+          "
+      
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'docs: Generate new README from codebase analysis'
+          title: 'Generated README Update (${{ github.event.inputs.template }} template)'
+          body: |
+            ## Generated README Update
+            
+            This PR contains a newly generated README based on automated code analysis.
+            
+            ### Generation Details:
+            - Template used: **${{ github.event.inputs.template }}**
+            - Include badges: **${{ github.event.inputs.include_badges }}**
+            - Generated from: Latest codebase analysis
+            
+            ### What was analyzed:
+            - ✅ Project structure and files
+            - ✅ Database models
+            - ✅ API routes and endpoints
+            - ✅ Features and capabilities
+            - ✅ Dependencies and requirements
+            
+            ### Next Steps:
+            1. Review the generated content
+            2. Make any necessary manual adjustments
+            3. Merge if the content is accurate
+            
+            The generated README is saved as `README_generated.md` for comparison.
+          branch: generate-readme-${{ github.run_number }}
+          delete-branch: true
+          labels: |
+            documentation
+            automated
+            generated
