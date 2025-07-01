@@ -232,6 +232,7 @@ class ReadmeUpdater:
         
         # Check for broken internal links
         internal_links = re.findall(r'\[([^\]]+)\]\(#([^)]+)\)', self.content)
+        # Extract just the header text (not the level)
         headers = re.findall(r'^#{1,6}\s+(.+)$', self.content, re.MULTILINE)
         anchors = []
         for header in headers:

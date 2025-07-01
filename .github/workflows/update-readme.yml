@@ -221,6 +221,7 @@ jobs:
           # Check for broken links and formatting issues
           python -c "
           import re
+          import os
           
           with open('README.md', 'r') as f:
               content = f.read()
@@ -234,13 +235,14 @@ jobs:
               if link.startswith('#'):
                   # Anchor link
                   anchor = link[1:]
+                  # Extract just the header text (not the level)
                   headers = re.findall(r'^#{1,6}\\s+(.+)$', content, re.MULTILINE)
-                  anchors = [h.lower().replace(' ', '-').replace('/', '').replace('(', '').replace(')', '') for _, h in headers]
+                  # Convert headers to anchors
+                  anchors = [h.lower().replace(' ', '-').replace('/', '').replace('(', '').replace(')', '') for h in headers]
                   if anchor not in anchors:
                       issues.append(f'Broken anchor link: {link}')
               elif not link.startswith('http'):
-                  # File link
-                  import os
+                  # File link - check if it exists
                   if not os.path.exists(link):
                       issues.append(f'Broken file link: {link}')
           
