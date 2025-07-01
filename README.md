@@ -2,6 +2,40 @@
 
 A production-like Role-Based Access Control (RBAC) authentication system built with FastAPI and SQLAlchemy. This project demonstrates complex permission management, secure endpoint enforcement, and comprehensive logging.
 
+
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Option 1: Use the startup script (recommended)](#option-1:-use-the-startup-script-recommended)
+- [Option 2: Direct uvicorn](#option-2:-direct-uvicorn)
+- [Installation](#installation)
+- [Running the Application](#running-the-application)
+  - [Method 1: Using the startup script (Recommended)](#method-1:-using-the-startup-script-recommended)
+  - [Method 2: Direct uvicorn](#method-2:-direct-uvicorn)
+  - [Method 3: With custom logging configuration](#method-3:-with-custom-logging-configuration)
+- [Logging System](#logging-system)
+  - [Log Files](#log-files)
+  - [Log Configuration](#log-configuration)
+  - [Testing the Logging System](#testing-the-logging-system)
+- [Start the server first](#start-the-server-first)
+- [In another terminal, run the test script](#in-another-terminal,-run-the-test-script)
+  - [Log Analysis](#log-analysis)
+- [View failed login attempts](#view-failed-login-attempts)
+- [Monitor permission denials](#monitor-permission-denials)
+- [Track API access](#track-api-access)
+- [API Documentation](#api-documentation)
+- [Default Roles and Permissions](#default-roles-and-permissions)
+  - [Roles:](#roles:)
+  - [Default Admin User:](#default-admin-user:)
+- [Protected Endpoints](#protected-endpoints)
+- [Authentication Flow](#authentication-flow)
+- [Testing](#testing)
+- [Fixed Issues](#fixed-issues)
+- [Logging Features Added](#logging-features-added)
+- [Project Structure](#project-structure)
+- [Environment Configuration](#environment-configuration)
+
 ## Features
 
 - JWT-based authentication
@@ -230,3 +264,6 @@ Available configuration options:
 - `SECRET_KEY`: JWT secret key (change in production)
 - `DATABASE_URL`: Database connection string
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: JWT token expiration time
+---
+
+*Last updated: 2025-07-01 17:31:00 UTC*
